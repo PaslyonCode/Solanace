@@ -123,6 +123,8 @@ $defaultDatabaseCredentialsActive = defined('DB_USER') && defined('DB_PASS') && 
                 <button id="openMetadataImportBtn" type="button" role="menuitem">Групповое добавление метаданных</button>
                 <button id="openMetadataViewBtn" type="button" role="menuitem">Групповой просмотр метаданных</button>
                 <button id="openScreenshotViewBtn" type="button" role="menuitem">Групповой просмотр кадров</button>
+                <button id="exportLibraryBtn" type="button" role="menuitem">Экспорт библиотеки</button>
+                <button id="importLibraryBtn" type="button" role="menuitem">Импорт библиотеки</button>
                 <button id="openSettingsBtn" type="button" role="menuitem">Настройки</button>
                 <button id="logoutBtn" type="button" role="menuitem" class="actions-menu-danger">Выйти</button>
             </div>
@@ -209,6 +211,15 @@ $defaultDatabaseCredentialsActive = defined('DB_USER') && defined('DB_PASS') && 
                 <p class="muted">Правая кнопка мыши открывает операции. Файлы и папки можно выделять и перетаскивать.</p>
             </div>
             <div class="tree-head-tools">
+                <label class="sort-label">
+                    <span>Сортировка</span>
+                    <select id="sortMode" aria-label="Сортировка">
+                        <option value="name_asc">По алфавиту (А-Я)</option>
+                        <option value="name_desc">По алфавиту (Я-А)</option>
+                        <option value="duration_asc">По длительности (↑)</option>
+                        <option value="duration_desc">По длительности (↓)</option>
+                    </select>
+                </label>
                 <div class="view-mode-toggle" role="group" aria-label="Режим отображения">
                     <button id="listViewBtn" type="button" class="view-mode-button active" aria-pressed="true" title="Список">☰ <span>Список</span></button>
                     <button id="tileViewBtn" type="button" class="view-mode-button" aria-pressed="false" title="Миниатюры">▦ <span>Миниатюры</span></button>
@@ -228,7 +239,30 @@ $defaultDatabaseCredentialsActive = defined('DB_USER') && defined('DB_PASS') && 
             <button id="clearSelectionBtn" type="button">Снять выделение</button>
         </div>
 
-        <div id="tree" class="tree empty" tabindex="0">Укажите папку и нажмите «Показать файлы».</div>
+        <div class="workspace-split">
+            <aside class="directory-sidebar">
+                <div class="directory-sidebar-card">
+                    <div class="directory-sidebar-head">
+                        <strong>Папки</strong>
+                        <span id="folderCounter" class="muted"></span>
+                    </div>
+                    <div class="folder-search-wrap">
+                        <input id="folderSearchInput" type="search" placeholder="Поиск по папкам…" aria-label="Поиск по папкам">
+                    </div>
+                    <div id="tree" class="tree empty" tabindex="0">Укажите папку и нажмите «Показать файлы».</div>
+                </div>
+            </aside>
+            <section class="file-browser-panel">
+                <div class="file-browser-head">
+                    <div>
+                        <h3 id="currentDirTitle">Файлы в папке</h3>
+                        <div id="currentDirMeta" class="current-dir-meta muted">Выберите папку слева, чтобы увидеть файлы.</div>
+                    </div>
+                </div>
+                <div id="currentDirSubfolders" class="current-dir-subfolders hidden"></div>
+                <div id="fileBrowser" class="file-browser empty">Укажите папку и нажмите «Показать файлы».</div>
+            </section>
+        </div>
     </main>
 </div>
 
@@ -482,102 +516,132 @@ $defaultDatabaseCredentialsActive = defined('DB_USER') && defined('DB_PASS') && 
 
 <div id="cardModal" class="modal hidden" aria-hidden="true">
     <div class="modal-backdrop" data-close="1"></div>
-    <div class="modal-window wide">
+    <div class="modal-window card-redesign-window">
         <button class="modal-close" type="button" data-close="1">×</button>
-        <h2 id="modalFileName">Карточка файла</h2>
-
-        <details id="videoScreenshotsSection" class="video-screenshots-section hidden">
-            <summary class="video-screenshots-summary">
-                <span>
-                    <strong>Кадры из видео</strong>
-                    <span id="videoScreenshotsCount" class="video-screenshots-count"></span>
-                </span>
-                <span class="muted">Автоматически создаются при обновлении кэша</span>
-            </summary>
-            <div id="videoScreenshotsGrid" class="video-screenshots-grid"></div>
-        </details>
-
-        <details id="fileToolsSection" class="file-tools-section">
-            <summary class="file-tools-summary">
-                <span><strong>Работа с файлом</strong></span>
-                <span id="fileToolsSummaryStatus" class="muted"></span>
-            </summary>
-            <div class="file-tools-body">
-                <div class="file-tools-buttons">
-                    <button id="mediaToolBtn" type="button">Аудио/Вырезка/Транскрипт</button>
-                    <button id="convertMp4Btn" type="button" class="hidden">Конвертировать в mp4</button>
-                </div>
-                <div id="fileToolsStatus" class="muted file-tools-status"></div>
-                <div id="fileAudioSection" class="file-tool-results hidden">
-                    <strong>Аудио</strong>
-                    <div id="fileAudioList" class="file-tool-list"></div>
-                </div>
-                <div id="fileTranscriptsSection" class="file-tool-results hidden">
-                    <strong>Транскрипты</strong>
-                    <div id="fileTranscriptsList" class="file-tool-list"></div>
-                </div>
-                <div id="fileClipsSection" class="file-tool-results hidden">
-                    <strong>Фрагменты</strong>
-                    <div id="fileClipsList" class="file-tool-list"></div>
-                </div>
-                <div id="filePromotedClipsSection" class="file-tool-results hidden">
-                    <strong>Созданные из фрагментов видео</strong>
-                    <div id="filePromotedClipsList" class="file-tool-list"></div>
-                </div>
-                <div id="fileSourceClipSection" class="file-tool-results hidden">
-                    <strong>Исходное видео для этого фрагмента</strong>
-                    <div id="fileSourceClipList" class="file-tool-list"></div>
-                </div>
+        <div class="card-title-row">
+            <h2 id="modalFileName" class="card-file-title">Карточка файла</h2>
+            <div id="cardNavigation" class="card-navigation hidden" aria-label="Перелистывание карточек">
+                <button id="prevCardBtn" type="button" class="card-nav-button" title="Предыдущая карточка" aria-label="Предыдущая карточка">‹</button>
+                <span id="cardNavCounter" class="card-nav-counter muted"></span>
+                <button id="nextCardBtn" type="button" class="card-nav-button" title="Следующая карточка" aria-label="Следующая карточка">›</button>
             </div>
-        </details>
-
-        <details id="mergeSourcesSection" class="merge-sources-section hidden" open>
-            <summary><strong>Склейка из видео</strong></summary>
-            <ol id="mergeSourcesList" class="merge-sources-list"></ol>
-        </details>
-
-        <p id="modalPath" class="muted"></p>
+        </div>
+        <p id="modalPath" class="muted card-file-path"></p>
 
         <form id="cardForm">
             <input type="hidden" id="cardToken" name="token">
-            <label>
-                <span>Кастомный заголовок</span>
-                <input id="customTitle" name="custom_title" type="text" maxlength="255">
-            </label>
-            <label>
-                <span>Заметка</span>
-                <textarea id="note" name="note" rows="8"></textarea>
-            </label>
-            <div class="category-row">
-                <label>
-                    <span>Категория</span>
-                    <select id="cardCategory" name="category_id"><option value="">Без категории</option></select>
-                </label>
-                <label>
-                    <span>Новая категория</span>
-                    <input id="newCategory" type="text" placeholder="Название">
-                </label>
-                <button id="addCategoryBtn" type="button">Добавить</button>
+            <button id="viewFromModal" type="button" class="hidden" tabindex="-1" aria-hidden="true">Просмотр</button>
+
+            <div class="card-redesign-grid">
+                <aside id="fileToolsSection" class="card-left-column">
+                    <button id="cardCoverButton" type="button" class="card-cover-button" title="Просмотр видео">
+                        <img id="cardCoverImage" class="card-cover-image hidden" alt="Миниатюра видео">
+                        <span id="cardCoverPlaceholder" class="card-cover-placeholder">Нет миниатюры</span>
+                        <span class="card-cover-play" aria-hidden="true">▶</span>
+                    </button>
+                    <div class="card-file-facts">
+                        <div><span>Размер</span><strong id="cardFileSize">—</strong></div>
+                        <div><span>Длительность</span><strong id="cardDuration">—</strong></div>
+                        <div><span>Добавлено</span><strong id="cardAddedAt">—</strong></div>
+                    </div>
+
+                    <div class="card-tool-launch">
+                        <button id="mediaToolBtn" type="button" class="primary card-main-tool-button">Вырезка/Аудио/Транскрипт</button>
+                        <button id="convertMp4Btn" type="button" class="hidden">Конвертировать в mp4</button>
+                    </div>
+                    <span id="fileToolsSummaryStatus" class="muted hidden"></span>
+                    <div id="fileToolsStatus" class="muted file-tools-status"></div>
+
+                    <div id="fileClipsSection" class="card-derivative-block hidden">
+                        <div class="card-derivative-heading">Видеофрагменты</div>
+                        <div id="fileClipsList" class="file-tool-list compact-tool-list"></div>
+                    </div>
+                    <div id="fileAudioSection" class="card-derivative-block hidden">
+                        <div class="card-derivative-heading">Аудио</div>
+                        <div id="fileAudioList" class="file-tool-list compact-tool-list"></div>
+                    </div>
+                    <div id="fileTranscriptsSection" class="card-derivative-block hidden">
+                        <div class="card-derivative-heading">Транскрипты</div>
+                        <div id="fileTranscriptsList" class="file-tool-list compact-tool-list"></div>
+                    </div>
+                    <div id="filePromotedClipsSection" class="card-derivative-block hidden">
+                        <div class="card-derivative-heading">Созданные из фрагментов видео</div>
+                        <div id="filePromotedClipsList" class="file-tool-list compact-tool-list"></div>
+                    </div>
+                    <div id="fileSourceClipSection" class="card-derivative-block hidden">
+                        <div class="card-derivative-heading">Исходное видео для этого фрагмента</div>
+                        <div id="fileSourceClipList" class="file-tool-list compact-tool-list"></div>
+                    </div>
+                </aside>
+
+                <section class="card-center-column">
+                    <div class="card-primary-fields">
+                        <label>
+                            <span>Кастомный заголовок</span>
+                            <input id="customTitle" name="custom_title" type="text" maxlength="255">
+                        </label>
+                        <label>
+                            <span>Категория</span>
+                            <select id="cardCategory" name="category_id"><option value="">Без категории</option></select>
+                        </label>
+                    </div>
+
+                    <label class="card-note-field">
+                        <span>Заметка</span>
+                        <textarea id="note" name="note" rows="9"></textarea>
+                    </label>
+
+                    <section id="videoScreenshotsSection" class="card-media-section hidden">
+                        <div class="card-section-heading">
+                            <strong>Кадры из видео</strong>
+                            <span id="videoScreenshotsCount" class="muted"></span>
+                        </div>
+                        <div id="videoScreenshotsGrid" class="video-screenshots-grid"></div>
+                    </section>
+
+                    <section class="card-media-section card-photos-section">
+                        <div class="card-section-heading"><strong>Прикрепленные фото</strong></div>
+                        <div id="imagesGrid" class="images-grid"></div>
+                        <div class="upload-row card-upload-row">
+                            <label>
+                                <span>Прикрепить фото</span>
+                                <input id="imageInput" type="file" accept="image/*" multiple>
+                            </label>
+                            <button id="uploadBtn" type="button">Загрузить</button>
+                        </div>
+                    </section>
+                </section>
+
+                <aside class="card-right-column">
+                    <section class="card-side-box pin-side-box">
+                        <div class="card-side-label">Закрепить</div>
+                        <button id="pinFromModal" class="pin-video-button card-pin-large" type="button" title="Закрепить видео" aria-label="Закрепить видео">☆</button>
+                    </section>
+
+                    <section class="card-side-box">
+                        <div class="card-side-label">Новая категория</div>
+                        <input id="newCategory" type="text" placeholder="Название">
+                        <button id="addCategoryBtn" type="button">Добавить</button>
+                    </section>
+
+                    <section id="mergeSourcesSection" class="card-side-box merge-sources-section hidden">
+                        <div class="card-side-label">Склейка из видео</div>
+                        <ol id="mergeSourcesList" class="merge-sources-list"></ol>
+                    </section>
+                </aside>
             </div>
-            <div class="actions">
-                <button type="submit" class="primary">Сохранить</button>
-                <button id="viewFromModal" class="button" type="button">Просмотр</button>
-                <button id="pinFromModal" class="pin-video-button" type="button" title="Закрепить видео" aria-label="Закрепить видео">☆</button>
-                <button id="deleteCardBtn" type="button" class="danger">Удалить карточку</button>
-                <button id="deleteFileFromCardBtn" type="button" class="danger">Удалить с диска</button>
-                <span id="saveStatus" class="muted"></span>
+
+            <div class="card-footer-actions">
+                <div class="card-footer-left">
+                    <button id="deleteCardBtn" type="button" class="danger">Удалить карточку</button>
+                </div>
+                <div class="card-footer-right">
+                    <span id="saveStatus" class="muted"></span>
+                    <button type="submit" class="primary">Сохранить</button>
+                    <button id="deleteFileFromCardBtn" type="button" class="danger">Удалить с диска</button>
+                </div>
             </div>
         </form>
-
-        <hr>
-        <div class="upload-row">
-            <label>
-                <span>Прикрепить фото</span>
-                <input id="imageInput" type="file" accept="image/*" multiple>
-            </label>
-            <button id="uploadBtn" type="button">Загрузить</button>
-        </div>
-        <div id="imagesGrid" class="images-grid"></div>
     </div>
 </div>
 
@@ -724,6 +788,7 @@ $defaultDatabaseCredentialsActive = defined('DB_USER') && defined('DB_PASS') && 
                     <div id="transcriptVersionMenu" class="transcript-version-menu hidden"></div>
                 </div>
                 <a id="transcriptDownload" class="button-link" href="#" download>Скачать TXT</a>
+                <button id="transcriptTranslateBtn" type="button">Перевести</button>
                 <button id="transcriptAddSegmentBtn" type="button">Добавить фрагмент</button>
             </div>
         </div>
@@ -743,6 +808,41 @@ $defaultDatabaseCredentialsActive = defined('DB_USER') && defined('DB_PASS') && 
             <button type="button" data-close-transcript-add="1">Отмена</button>
         </div>
         <p id="transcriptAddStatus" class="muted"></p>
+    </div>
+</div>
+
+
+<div id="libraryImportModal" class="modal hidden" aria-hidden="true">
+    <div class="modal-backdrop" data-close-library-import="1"></div>
+    <div class="modal-window library-transfer-window">
+        <button class="modal-close" type="button" data-close-library-import="1">×</button>
+        <h2>Импорт библиотеки</h2>
+        <p class="muted library-transfer-help">Импорт выполняется в текущую выбранную корневую папку. Исходные видео в ZIP не входят: они уже должны находиться в этой папке с той же относительной структурой.</p>
+        <div class="library-transfer-target">
+            <span>Текущая папка</span>
+            <code id="libraryImportRoot">—</code>
+        </div>
+        <label>
+            <span>Подпапка с перенесёнными файлами (необязательно)</span>
+            <input id="libraryImportSubdir" type="text" placeholder="Например: Archive2026 или Перенос/Видео">
+        </label>
+        <p class="muted library-transfer-subdir-help">Оставьте пустым, если структура файлов начинается прямо от выбранной корневой папки. Путь указывается относительно неё.</p>
+        <label>
+            <span>ZIP из корня библиотеки</span>
+            <select id="libraryImportServerZip">
+                <option value="">Выберите архив…</option>
+            </select>
+        </label>
+        <div class="library-transfer-or"><span>или</span></div>
+        <label>
+            <span>Загрузить ZIP с компьютера</span>
+            <input id="libraryImportFile" type="file" accept=".zip,application/zip">
+        </label>
+        <div class="actions library-transfer-actions">
+            <button id="libraryImportRefreshBtn" type="button">Обновить список</button>
+            <button id="libraryImportStartBtn" type="button" class="primary">Импортировать</button>
+        </div>
+        <p id="libraryImportStatus" class="muted"></p>
     </div>
 </div>
 

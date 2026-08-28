@@ -18,6 +18,9 @@ let screenshotViewRows = [];
 let currentFileToolsToken = '';
 let fileToolJobTimers = new Map();
 let currentViewMode = localStorage.getItem('video_catalog_view_mode') === 'tiles' ? 'tiles' : 'list';
+let currentDirectoryPath = localStorage.getItem('video_catalog_selected_dir') || '';
+let currentSortMode = localStorage.getItem('video_catalog_sort_mode') || 'name_asc';
+let folderSearchQuery = '';
 let thumbnailObserver = null;
 let mergeItems = [];
 let mergePollTimers = new Map();
@@ -171,6 +174,7 @@ async function loadTree({ announceInitialCache = true, processScreenshots = true
     hideContextMenu();
     $('tree').innerHTML = '';
     $('tree').classList.remove('empty');
+    if ($('fileBrowser')) { $('fileBrowser').innerHTML = ''; $('fileBrowser').classList.remove('empty'); }
 
     try {
         const params = new URLSearchParams({ action: 'tree', root: requestedRoot });
@@ -215,6 +219,7 @@ async function loadTree({ announceInitialCache = true, processScreenshots = true
     } catch (error) {
         $('tree').textContent = 'Не удалось загрузить дерево файлов.';
         $('tree').classList.add('empty');
+        if ($('fileBrowser')) { $('fileBrowser').textContent = 'Не удалось загрузить файлы.'; $('fileBrowser').classList.add('empty'); }
         currentTree = null;
         selectedItems.clear();
         updateSelectionToolbar();
@@ -362,6 +367,99 @@ function countTreeFiles(node) {
     if (!node) return 0;
     if (node.type === 'file') return 1;
     return (node.children || []).reduce((sum, child) => sum + countTreeFiles(child), 0);
+}
+
+function countTreeDirectories(node, includeRoot = false) {
+    if (!node || node.type !== 'dir') return 0;
+    let total = includeRoot ? 1 : 0;
+    for (const child of node.children || []) {
+        if (child.type === 'dir') total += countTreeDirectories(child, true);
+    }
+    return total;
+}
+
+function normalizeNodePath(path) {
+    return String(path || '').replace(/\\/g, '/').replace(/\/+$/g, '').toLocaleLowerCase();
+}
+
+function findDirectoryNode(node, path) {
+    if (!node || node.type !== 'dir') return null;
+    if (normalizeNodePath(node.path || node.name) === normalizeNodePath(path)) return node;
+    for (const child of node.children || []) {
+        if (child.type !== 'dir') continue;
+        const found = findDirectoryNode(child, path);
+        if (found) return found;
+    }
+    return null;
+}
+
+function findDirectoryChain(node, path, chain = []) {
+    if (!node || node.type !== 'dir') return null;
+    const nextChain = [...chain, node];
+    if (normalizeNodePath(node.path || node.name) === normalizeNodePath(path)) return nextChain;
+    for (const child of node.children || []) {
+        if (child.type !== 'dir') continue;
+        const found = findDirectoryChain(child, path, nextChain);
+        if (found) return found;
+    }
+    return null;
+}
+
+function directoryMatchesFolderSearch(node) {
+    if (!node || node.type !== 'dir') return false;
+    const query = folderSearchQuery.trim().toLocaleLowerCase();
+    if (!query) return true;
+    if (String(node.name || '').toLocaleLowerCase().includes(query)) return true;
+    return (node.children || []).some((child) => child.type === 'dir' && directoryMatchesFolderSearch(child));
+}
+
+function getCurrentDirectoryNode(tree) {
+    if (!tree || tree.type !== 'dir') return null;
+    const found = currentDirectoryPath ? findDirectoryNode(tree, currentDirectoryPath) : null;
+    if (found) return found;
+    currentDirectoryPath = tree.path || tree.name || '';
+    localStorage.setItem('video_catalog_selected_dir', currentDirectoryPath);
+    return tree;
+}
+
+function setCurrentDirectory(path) {
+    currentDirectoryPath = String(path || '').trim();
+    localStorage.setItem('video_catalog_selected_dir', currentDirectoryPath);
+    if (currentTree) renderTree(currentTree);
+}
+
+function fileDisplayName(node) {
+    return String(node?.title || node?.name || '').trim();
+}
+
+function sortFilesForBrowser(items) {
+    const files = [...(items || [])];
+    const byName = (a, b) => fileDisplayName(a).localeCompare(fileDisplayName(b), undefined, { sensitivity: 'base', numeric: true });
+    const byDuration = (a, b) => (Number(a.duration_seconds) || 0) - (Number(b.duration_seconds) || 0);
+    switch (currentSortMode) {
+        case 'name_desc':
+            return files.sort((a, b) => byName(b, a));
+        case 'duration_asc':
+            return files.sort((a, b) => byDuration(a, b) || byName(a, b));
+        case 'duration_desc':
+            return files.sort((a, b) => byDuration(b, a) || byName(a, b));
+        case 'name_asc':
+        default:
+            return files.sort((a, b) => byName(a, b));
+    }
+}
+
+function updateSortModeControl() {
+    const select = $('sortMode');
+    if (select) select.value = currentSortMode;
+}
+
+function setSortMode(mode) {
+    const allowed = new Set(['name_asc', 'name_desc', 'duration_asc', 'duration_desc']);
+    currentSortMode = allowed.has(mode) ? mode : 'name_asc';
+    localStorage.setItem('video_catalog_sort_mode', currentSortMode);
+    updateSortModeControl();
+    if (currentTree) renderTree(currentTree);
 }
 
 function updateViewModeButtons() {
@@ -517,18 +615,223 @@ function renderPinnedVideos(tree) {
     box.appendChild(list);
 }
 
+function renderDirectoryTreeNode(node, isRoot = false) {
+    if (!directoryMatchesFolderSearch(node)) return null;
+
+    const listItem = document.createElement('li');
+    listItem.className = 'dir-node dir-only-node';
+
+    const childDirs = Array.isArray(node.children)
+        ? node.children.filter((child) => child.type === 'dir' && directoryMatchesFolderSearch(child))
+        : [];
+    const hasChildren = childDirs.length > 0;
+    const dirPath = node.path || node.name;
+    const searchActive = folderSearchQuery.trim() !== '';
+    const isExpanded = searchActive || isRoot || expandedDirs.has(dirPath);
+    const isActive = normalizeNodePath(dirPath) === normalizeNodePath(currentDirectoryPath);
+
+    const row = document.createElement('div');
+    row.className = `node-row dir-row dir-tree-row${isRoot ? ' root-row' : ''}${isActive ? ' active-dir' : ''}`;
+    row.dataset.path = dirPath;
+
+    if (!isRoot) {
+        row.appendChild(makeSelectionCheckbox('dir', dirPath));
+        attachItemInteractions(row, { type: 'dir', path: dirPath });
+    }
+
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'dir-toggle';
+    toggle.textContent = hasChildren ? (isExpanded ? '▾' : '▸') : '•';
+    toggle.disabled = !hasChildren;
+    toggle.title = hasChildren ? (isExpanded ? 'Свернуть' : 'Развернуть') : 'Пустая папка';
+
+    const icon = document.createElement('span');
+    icon.className = 'dir-icon';
+    icon.textContent = isExpanded ? '📂' : '📁';
+
+    const name = document.createElement('button');
+    name.type = 'button';
+    name.draggable = false;
+    name.className = 'dir-name';
+    name.textContent = node.name;
+    name.title = dirPath;
+
+    const children = document.createElement('ul');
+    children.className = 'dir-children';
+    children.classList.toggle('hidden', !isExpanded);
+    childDirs.forEach((child) => {
+        const rendered = renderDirectoryTreeNode(child);
+        if (rendered) children.appendChild(rendered);
+    });
+
+    const toggleDirectory = () => {
+        if (!hasChildren) return;
+        const willExpand = children.classList.contains('hidden');
+        children.classList.toggle('hidden', !willExpand);
+        toggle.textContent = willExpand ? '▾' : '▸';
+        icon.textContent = willExpand ? '📂' : '📁';
+        if (willExpand) expandedDirs.add(dirPath);
+        else expandedDirs.delete(dirPath);
+        saveExpandedDirs();
+    };
+
+    toggle.addEventListener('click', (event) => {
+        event.stopPropagation();
+        toggleDirectory();
+    });
+
+    name.addEventListener('click', (event) => {
+        event.stopPropagation();
+        setCurrentDirectory(dirPath);
+    });
+
+    row.addEventListener('click', (event) => {
+        if (event.target.closest('.node-checkbox') || event.target.closest('.dir-toggle')) return;
+        setCurrentDirectory(dirPath);
+    });
+
+    row.append(toggle, icon, name);
+    attachDropTarget(row, dirPath);
+    row.addEventListener('contextmenu', (event) => {
+        if (!isRoot) return;
+        event.preventDefault();
+        event.stopPropagation();
+        showContextMenu(event.clientX, event.clientY, { type: 'root', path: dirPath });
+    });
+
+    listItem.appendChild(row);
+    listItem.appendChild(children);
+    return listItem;
+}
+
+function renderCurrentDirectoryView(tree) {
+    const panel = $('fileBrowser');
+    const title = $('currentDirTitle');
+    const meta = $('currentDirMeta');
+    const subfoldersBox = $('currentDirSubfolders');
+    panel.innerHTML = '';
+    subfoldersBox.innerHTML = '';
+
+    const currentDir = getCurrentDirectoryNode(tree);
+    if (!currentDir) {
+        title.textContent = 'Файлы в папке';
+        meta.textContent = 'Выберите папку слева, чтобы увидеть файлы.';
+        panel.classList.add('empty');
+        panel.textContent = 'Видео не найдены';
+        subfoldersBox.classList.add('hidden');
+        return;
+    }
+
+    const childDirs = (currentDir.children || []).filter((child) => child.type === 'dir');
+    const childFiles = sortFilesForBrowser((currentDir.children || []).filter((child) => child.type === 'file'));
+
+    title.textContent = currentDir.name || 'Файлы в папке';
+    meta.innerHTML = '';
+    const chain = findDirectoryChain(tree, currentDir.path || currentDir.name) || [currentDir];
+    const breadcrumb = document.createElement('nav');
+    breadcrumb.className = 'path-breadcrumb';
+    breadcrumb.setAttribute('aria-label', 'Путь к папке');
+    chain.forEach((dir, index) => {
+        if (index > 0) {
+            const separator = document.createElement('span');
+            separator.className = 'path-breadcrumb-separator';
+            separator.textContent = '›';
+            breadcrumb.appendChild(separator);
+        }
+        const isLast = index === chain.length - 1;
+        if (isLast) {
+            const current = document.createElement('span');
+            current.className = 'path-breadcrumb-current';
+            current.textContent = dir.name || dir.path || '';
+            breadcrumb.appendChild(current);
+        } else {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'path-breadcrumb-link';
+            button.textContent = dir.name || dir.path || '';
+            button.title = dir.path || dir.name || '';
+            button.addEventListener('click', () => setCurrentDirectory(dir.path || dir.name));
+            breadcrumb.appendChild(button);
+        }
+    });
+    const stats = document.createElement('span');
+    stats.className = 'current-dir-stats';
+    stats.textContent = `Файлов: ${childFiles.length} • Подпапок: ${childDirs.length}`;
+    meta.append(breadcrumb, stats);
+
+    if (childDirs.length) {
+        const label = document.createElement('div');
+        label.className = 'subfolder-caption';
+        label.textContent = 'Подпапки';
+        subfoldersBox.appendChild(label);
+        childDirs.forEach((dir) => {
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.className = 'subfolder-pill';
+            button.textContent = dir.name;
+            button.title = dir.path || dir.name;
+            button.addEventListener('click', () => setCurrentDirectory(dir.path || dir.name));
+            subfoldersBox.appendChild(button);
+        });
+        subfoldersBox.classList.remove('hidden');
+    } else {
+        subfoldersBox.classList.add('hidden');
+    }
+
+    panel.classList.toggle('empty', childFiles.length === 0);
+    if (!childFiles.length) {
+        const empty = document.createElement('div');
+        empty.className = 'file-browser-empty';
+        empty.textContent = 'В этой папке пока нет видеофайлов.';
+        panel.appendChild(empty);
+        return;
+    }
+
+    if (currentViewMode === 'tiles') {
+        const grid = document.createElement('div');
+        grid.className = 'video-tile-grid file-browser-grid';
+        childFiles.forEach((file) => grid.appendChild(renderVideoTile(file)));
+        panel.appendChild(grid);
+        window.requestAnimationFrame(() => observeLazyThumbnails(panel));
+        return;
+    }
+
+    const list = document.createElement('ul');
+    list.className = 'file-browser-list';
+    childFiles.forEach((file) => list.appendChild(renderListNode(file)));
+    panel.appendChild(list);
+}
+
 function renderTree(tree) {
     const container = $('tree');
+    const browser = $('fileBrowser');
     container.innerHTML = '';
+    browser.innerHTML = '';
+
     const list = document.createElement('ul');
-    list.appendChild(currentViewMode === 'tiles' ? renderTileDirectory(tree, true) : renderListNode(tree, true));
-    container.appendChild(list);
+    list.className = 'directory-tree-list';
+    const rootNode = renderDirectoryTreeNode(tree, true);
+    if (rootNode) {
+        list.appendChild(rootNode);
+        container.appendChild(list);
+    } else {
+        const empty = document.createElement('div');
+        empty.className = 'tree-search-empty';
+        empty.textContent = 'Папки не найдены.';
+        container.appendChild(empty);
+    }
+
     renderPinnedVideos(tree);
-    const count = countTreeFiles(tree);
-    $('fileCounter').textContent = count ? `${count} видео` : 'Видео не найдены';
+    renderCurrentDirectoryView(tree);
+
+    const fileCount = countTreeFiles(tree);
+    const folderCount = countTreeDirectories(tree, false);
+    $('fileCounter').textContent = fileCount ? `${fileCount} видео` : 'Видео не найдены';
+    if ($('folderCounter')) $('folderCounter').textContent = `${folderCount} папок`;
     updateViewModeButtons();
+    updateSortModeControl();
     updateSelectionToolbar();
-    if (currentViewMode === 'tiles') observeLazyThumbnails(container);
 }
 
 function saveExpandedDirs() {
@@ -1189,7 +1492,6 @@ async function loadMergeInfo(token) {
             list.appendChild(li);
         });
         section.classList.remove('hidden');
-        section.open = true;
     } catch (error) {
         console.warn('Merge metadata:', error);
     }
@@ -1544,6 +1846,66 @@ function renderResults(results) {
     updateSelectionToolbar();
 }
 
+function findFileParentDirectory(node, token) {
+    if (!node || node.type !== 'dir') return null;
+    for (const child of node.children || []) {
+        if (child.type === 'file' && child.token === token) return node;
+    }
+    for (const child of node.children || []) {
+        if (child.type !== 'dir') continue;
+        const found = findFileParentDirectory(child, token);
+        if (found) return found;
+    }
+    return null;
+}
+
+function getCardNavigationItems(token) {
+    if (!currentTree || !token) return [];
+    const parent = findFileParentDirectory(currentTree, token);
+    if (!parent) return [];
+    return sortFilesForBrowser((parent.children || []).filter((child) => child.type === 'file'));
+}
+
+function updateCardNavigation(token) {
+    const navigation = $('cardNavigation');
+    const previous = $('prevCardBtn');
+    const next = $('nextCardBtn');
+    const counter = $('cardNavCounter');
+    if (!navigation || !previous || !next || !counter) return;
+
+    const items = getCardNavigationItems(token);
+    const index = items.findIndex((item) => item.token === token);
+    const available = index >= 0 && items.length > 1;
+    navigation.classList.toggle('hidden', !available);
+
+    if (index < 0 || !items.length) {
+        previous.disabled = true;
+        next.disabled = true;
+        counter.textContent = '';
+        previous.dataset.token = '';
+        next.dataset.token = '';
+        return;
+    }
+
+    previous.disabled = index <= 0;
+    next.disabled = index >= items.length - 1;
+    previous.dataset.token = index > 0 ? (items[index - 1].token || '') : '';
+    next.dataset.token = index < items.length - 1 ? (items[index + 1].token || '') : '';
+    counter.textContent = `${index + 1} / ${items.length}`;
+}
+
+async function navigateCard(direction) {
+    const button = direction < 0 ? $('prevCardBtn') : $('nextCardBtn');
+    const token = button?.dataset.token || '';
+    if (!token || button.disabled) return;
+    button.disabled = true;
+    try {
+        await openCard(token);
+    } finally {
+        updateCardNavigation($('cardToken')?.value || '');
+    }
+}
+
 async function openCard(token) {
     hideContextMenu();
     try {
@@ -1579,6 +1941,46 @@ function closeCard() {
     }
 }
 
+function formatFileSize(bytes) {
+    const value = Number(bytes) || 0;
+    if (value <= 0) return '—';
+    const units = ['Б', 'КБ', 'МБ', 'ГБ', 'ТБ'];
+    let size = value;
+    let index = 0;
+    while (size >= 1024 && index < units.length - 1) {
+        size /= 1024;
+        index += 1;
+    }
+    const digits = index >= 3 ? 2 : index >= 2 ? 1 : 0;
+    return `${size.toFixed(digits)} ${units[index]}`;
+}
+
+function formatCardDate(value) {
+    if (!value) return '—';
+    const normalized = String(value).replace(' ', 'T');
+    const date = new Date(normalized);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString([], { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function renderCardCover(card) {
+    const image = $('cardCoverImage');
+    const placeholder = $('cardCoverPlaceholder');
+    const screenshots = Array.isArray(card.screenshots) ? card.screenshots : [];
+    const selected = screenshots.find((item) => item.is_thumbnail) || screenshots[1] || screenshots[0] || null;
+    image.classList.toggle('hidden', !selected);
+    placeholder.classList.toggle('hidden', Boolean(selected));
+    if (selected) {
+        image.src = selected.url;
+        image.alt = card.custom_title || card.file_name || 'Миниатюра видео';
+    } else {
+        image.removeAttribute('src');
+    }
+    const cover = $('cardCoverButton');
+    cover.dataset.token = card.token || '';
+    cover.dataset.title = card.custom_title || card.file_name || 'Просмотр видео';
+}
+
 function fillCard(card) {
     $('modalFileName').textContent = card.file_name;
     $('modalPath').textContent = card.file_path;
@@ -1588,10 +1990,15 @@ function fillCard(card) {
     fillCategorySelect($('cardCategory'), card.category_id || '', 'Без категории');
     $('viewFromModal').dataset.token = card.token;
     $('viewFromModal').dataset.title = card.custom_title || card.file_name;
+    $('cardFileSize').textContent = formatFileSize(card.file_size);
+    $('cardDuration').textContent = formatVideoDuration(card.duration_seconds);
+    $('cardAddedAt').textContent = formatCardDate(card.first_seen_at);
+    updateCardNavigation(card.token);
     updateCardPinButton(Boolean(card.is_pinned));
     $('saveStatus').textContent = '';
+    renderCardCover(card);
     renderVideoScreenshots(card.screenshots || []);
-    renderImages(card.images);
+    renderImages(card.images || []);
     currentFileToolsToken = card.token;
     resetFileToolsPanel();
     loadFileTools(card.token).catch((error) => {
@@ -1616,7 +2023,6 @@ function renderVideoScreenshots(screenshots) {
     const count = $('videoScreenshotsCount');
     grid.innerHTML = '';
     section.classList.toggle('hidden', !screenshots.length);
-    section.open = false;
     count.textContent = screenshots.length ? `(${screenshots.length})` : '';
     if (!screenshots.length) return;
 
@@ -1897,10 +2303,12 @@ function resetFileToolsPanel() {
     $('fileToolsStatus').textContent = 'Загрузка…';
     $('fileAudioList').innerHTML = '';
     $('fileClipsList').innerHTML = '';
+    $('fileTranscriptsList').innerHTML = '';
     $('filePromotedClipsList').innerHTML = '';
     $('fileSourceClipList').innerHTML = '';
     $('fileAudioSection').classList.add('hidden');
     $('fileClipsSection').classList.add('hidden');
+    $('fileTranscriptsSection').classList.add('hidden');
     $('filePromotedClipsSection').classList.add('hidden');
     $('fileSourceClipSection').classList.add('hidden');
     $('convertMp4Btn').classList.add('hidden');
@@ -1955,27 +2363,80 @@ async function promoteClip(item) {
     }
 }
 
+function makeDerivativeActionMenu(entries) {
+    const details = document.createElement('details');
+    details.className = 'derivative-action-menu';
+    const summary = document.createElement('summary');
+    summary.className = 'derivative-gear-button';
+    summary.textContent = '⚙';
+    summary.title = 'Действия';
+    summary.setAttribute('aria-label', 'Действия');
+    details.appendChild(summary);
+
+    const menu = document.createElement('div');
+    menu.className = 'derivative-action-popover';
+    for (const entry of entries) {
+        if (entry.type === 'link') {
+            const link = document.createElement('a');
+            link.href = entry.href;
+            link.textContent = entry.label;
+            link.className = entry.danger ? 'danger-menu-item' : '';
+            if (entry.download) link.setAttribute('download', entry.download === true ? '' : entry.download);
+            menu.appendChild(link);
+            continue;
+        }
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.textContent = entry.label;
+        if (entry.danger) button.className = 'danger-menu-item';
+        button.disabled = Boolean(entry.disabled);
+        if (entry.title) button.title = entry.title;
+        button.addEventListener('click', async (event) => {
+            event.preventDefault();
+            details.removeAttribute('open');
+            if (entry.onClick) await entry.onClick();
+        });
+        menu.appendChild(button);
+    }
+    details.appendChild(menu);
+    return details;
+}
+
+async function deleteDerivativeItem(item) {
+    if (!confirm(`Удалить файл «${item.download_name}»?`)) return;
+    try {
+        await fileToolsPost('delete_derivative', { id: item.id });
+        await loadFileTools(currentFileToolsToken);
+    } catch (error) {
+        $('fileToolsStatus').textContent = error.message;
+    }
+}
+
 function renderDerivativeList(container, items, options = {}) {
     container.innerHTML = '';
     for (const item of items) {
         const row = document.createElement('div');
-        row.className = 'file-tool-result-row';
+        row.className = 'compact-derivative-row';
 
         const main = document.createElement('div');
-        main.className = 'file-tool-result-main';
+        main.className = 'compact-derivative-main';
 
         if (options.clip) {
-            const viewName = document.createElement('button');
-            viewName.type = 'button';
-            viewName.className = 'file-tool-name-button';
-            viewName.textContent = item.download_name;
-            viewName.title = 'Просмотреть фрагмент';
-            viewName.addEventListener('click', () => openDerivedVideo(item));
-            main.appendChild(viewName);
+            const name = document.createElement('button');
+            name.type = 'button';
+            name.className = 'file-tool-name-button compact-derivative-name';
+            name.textContent = item.download_name;
+            name.title = 'Просмотреть фрагмент';
+            name.addEventListener('click', () => openDerivedVideo(item));
+            main.appendChild(name);
+            const range = document.createElement('span');
+            range.className = 'muted compact-derivative-meta';
+            range.textContent = derivativeRangeLabel(item).replace(/^\s*[()]|[()]$/g, '') || 'Видеофрагмент';
+            main.appendChild(range);
         } else {
             const link = document.createElement('a');
             link.href = item.download_url;
-            link.className = 'file-tool-download';
+            link.className = 'file-tool-download compact-derivative-name';
             link.textContent = item.download_name;
             link.setAttribute('download', item.download_name);
             main.appendChild(link);
@@ -1986,45 +2447,23 @@ function renderDerivativeList(container, items, options = {}) {
             player.controls = true;
             player.preload = 'none';
             player.src = item.inline_url;
-            player.className = 'file-tool-audio-player';
+            player.className = 'file-tool-audio-player compact-audio-player';
             main.appendChild(player);
         }
 
-        const actions = document.createElement('div');
-        actions.className = 'file-tool-result-actions';
-
+        const entries = [];
         if (options.clip) {
-            const download = document.createElement('a');
-            download.href = item.download_url;
-            download.className = 'button-link compact-link';
-            download.textContent = 'Скачать';
-            download.setAttribute('download', item.download_name);
-            actions.appendChild(download);
-
-            const promote = document.createElement('button');
-            promote.type = 'button';
-            promote.textContent = 'Сделать обычным';
-            promote.disabled = options.canPromote === false;
-            if (promote.disabled) promote.title = 'Дождитесь завершения текущих операций с видео';
-            promote.addEventListener('click', () => promoteClip(item));
-            actions.appendChild(promote);
+            entries.push({ type: 'link', label: 'Скачать', href: item.download_url, download: item.download_name });
+            entries.push({
+                label: 'Сделать обычным видео',
+                disabled: options.canPromote === false,
+                title: options.canPromote === false ? 'Дождитесь завершения текущих операций с видео' : '',
+                onClick: () => promoteClip(item),
+            });
         }
+        entries.push({ label: 'Удалить', danger: true, onClick: () => deleteDerivativeItem(item) });
 
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'danger subtle-danger';
-        remove.textContent = 'Удалить';
-        remove.addEventListener('click', async () => {
-            if (!confirm(`Удалить файл «${item.download_name}»?`)) return;
-            try {
-                await fileToolsPost('delete_derivative', { id: item.id });
-                await loadFileTools(currentFileToolsToken);
-            } catch (error) {
-                $('fileToolsStatus').textContent = error.message;
-            }
-        });
-        actions.appendChild(remove);
-        row.append(main, actions);
+        row.append(main, makeDerivativeActionMenu(entries));
         container.appendChild(row);
     }
 }
@@ -2088,15 +2527,19 @@ function renderTranscriptList(container, items) {
     container.innerHTML = '';
     for (const item of items) {
         const row = document.createElement('div');
-        row.className = 'file-tool-result-row transcript-result-row';
+        row.className = 'compact-derivative-row transcript-result-row';
 
         const main = document.createElement('div');
-        main.className = 'file-tool-result-main';
-        const name = document.createElement('div');
-        name.className = 'transcript-result-name';
+        main.className = 'compact-derivative-main';
+        const name = document.createElement('button');
+        name.type = 'button';
+        name.className = 'file-tool-name-button compact-derivative-name';
         name.textContent = item.download_name;
+        name.title = 'Открыть транскрипт';
+        name.addEventListener('click', () => openTranscript(item.id));
+
         const meta = document.createElement('div');
-        meta.className = 'muted transcript-result-meta';
+        meta.className = 'muted compact-derivative-meta';
         const metaParts = [item.provider || 'сервис'];
         if (item.language) metaParts.push(transcriptLanguageLabel(item.language));
         if (item.segment_count) metaParts.push(`${item.segment_count} фрагм.`);
@@ -2107,39 +2550,32 @@ function renderTranscriptList(container, items) {
         meta.textContent = metaParts.join(' · ');
         main.append(name, meta);
 
-        const actions = document.createElement('div');
-        actions.className = 'file-tool-result-actions';
-        const view = document.createElement('button');
-        view.type = 'button';
-        view.textContent = 'Посмотреть';
-        view.addEventListener('click', () => openTranscript(item.id));
-        const download = document.createElement('a');
-        download.href = item.download_url;
-        download.className = 'button-link compact-link';
-        download.textContent = 'Скачать TXT';
-        download.setAttribute('download', item.download_name);
-        const translate = document.createElement('button');
-        translate.type = 'button';
-        translate.textContent = item.translation_job ? `Перевод ${item.translation_job.progress_percent || 0}%` : 'Перевести';
-        translate.disabled = Boolean(item.translation_job);
-        translate.addEventListener('click', () => openTranslationTargetModal(item));
         if (item.translation_job) monitorTranslationJob(item.translation_job.id);
-        const remove = document.createElement('button');
-        remove.type = 'button';
-        remove.className = 'danger subtle-danger';
-        remove.textContent = 'Удалить';
-        remove.addEventListener('click', async () => {
-            if (!confirm(`Удалить транскрипт «${item.download_name}»?`)) return;
-            try {
-                await transcriptionPost('delete', { id: item.id });
-                await loadFileTools(currentFileToolsToken);
-                await doSearch();
-            } catch (error) {
-                $('fileToolsStatus').textContent = error.message;
-            }
-        });
-        actions.append(view, download, translate, remove);
-        row.append(main, actions);
+
+        const entries = [
+            { type: 'link', label: 'Скачать TXT', href: item.download_url, download: item.download_name },
+            {
+                label: item.translation_job ? `Перевод ${item.translation_job.progress_percent || 0}%` : 'Перевести',
+                disabled: Boolean(item.translation_job),
+                onClick: () => openTranslationTargetModal(item),
+            },
+            {
+                label: 'Удалить',
+                danger: true,
+                onClick: async () => {
+                    if (!confirm(`Удалить транскрипт «${item.download_name}»?`)) return;
+                    try {
+                        await transcriptionPost('delete', { id: item.id });
+                        await loadFileTools(currentFileToolsToken);
+                        await doSearch();
+                    } catch (error) {
+                        $('fileToolsStatus').textContent = error.message;
+                    }
+                },
+            },
+        ];
+
+        row.append(main, makeDerivativeActionMenu(entries));
         container.appendChild(row);
     }
 }
@@ -3594,6 +4030,122 @@ function showNextImage() {
     showImageAt(imageViewerIndex + 1);
 }
 
+
+function libraryTransferPost(action, values = {}, file = null) {
+    const form = new FormData();
+    form.append('action', action);
+    Object.entries(values).forEach(([key, value]) => form.append(key, value ?? ''));
+    if (file) form.append('archive', file, file.name || 'solanace_export.zip');
+    return fetchJson('utilities/library_transfer.php', { method: 'POST', body: form });
+}
+
+function formatTransferSize(bytes) {
+    const value = Number(bytes) || 0;
+    if (value < 1024) return `${value} Б`;
+    const units = ['КБ', 'МБ', 'ГБ', 'ТБ'];
+    let n = value / 1024;
+    let unit = units[0];
+    for (let i = 1; i < units.length && n >= 1024; i++) { n /= 1024; unit = units[i]; }
+    return `${n >= 100 ? n.toFixed(0) : n >= 10 ? n.toFixed(1) : n.toFixed(2)} ${unit}`;
+}
+
+async function exportCurrentLibrary() {
+    closeActionsMenu();
+    const root = String($('rootPath')?.value || currentRoot || '').trim();
+    if (!root) return showMessage('Сначала выберите корневую папку библиотеки.');
+    if (!confirm('Создать ZIP-экспорт текущей библиотеки? Архив с базой и служебным кэшем будет сохранен в корне выбранной папки. Исходные видео в архив не включаются.')) return;
+    const button = $('exportLibraryBtn');
+    button.disabled = true;
+    showMessage('Создаю экспорт библиотеки. Для большого кэша это может занять некоторое время…', false);
+    try {
+        const data = await libraryTransferPost('export', { root });
+        const result = data.export || {};
+        showMessage(`Экспорт готов: ${result.file_name || 'ZIP'} · ${formatTransferSize(result.size)} · файлов библиотеки: ${result.files || 0}. Архив сохранен в корне библиотеки.`, false);
+    } catch (error) {
+        showMessage(error.message);
+    } finally {
+        button.disabled = false;
+    }
+}
+
+async function refreshLibraryImportList() {
+    const root = String($('rootPath')?.value || currentRoot || '').trim();
+    const select = $('libraryImportServerZip');
+    if (!root || !select) return;
+    select.innerHTML = '<option value="">Загрузка списка…</option>';
+    try {
+        const data = await libraryTransferPost('list_exports', { root });
+        const items = Array.isArray(data.exports) ? data.exports : [];
+        select.innerHTML = '<option value="">Выберите архив…</option>';
+        for (const item of items) {
+            const option = document.createElement('option');
+            option.value = item.name;
+            option.textContent = `${item.name} · ${formatTransferSize(item.size)}`;
+            select.appendChild(option);
+        }
+        if (!items.length) {
+            const option = document.createElement('option');
+            option.value = '';
+            option.disabled = true;
+            option.textContent = 'В корне нет экспортов Solanace';
+            select.appendChild(option);
+        }
+    } catch (error) {
+        select.innerHTML = '<option value="">Не удалось получить список</option>';
+        $('libraryImportStatus').textContent = error.message;
+    }
+}
+
+async function openLibraryImportModal() {
+    closeActionsMenu();
+    const root = String($('rootPath')?.value || currentRoot || '').trim();
+    if (!root) return showMessage('Сначала выберите корневую папку библиотеки.');
+    $('libraryImportRoot').textContent = root;
+    $('libraryImportFile').value = '';
+    if ($('libraryImportSubdir')) $('libraryImportSubdir').value = '';
+    $('libraryImportStatus').textContent = '';
+    $('libraryImportModal').classList.remove('hidden');
+    $('libraryImportModal').setAttribute('aria-hidden', 'false');
+    await refreshLibraryImportList();
+}
+
+function closeLibraryImportModal() {
+    $('libraryImportModal').classList.add('hidden');
+    $('libraryImportModal').setAttribute('aria-hidden', 'true');
+    $('libraryImportStatus').textContent = '';
+}
+
+async function importCurrentLibrary() {
+    const root = String($('rootPath')?.value || currentRoot || '').trim();
+    const localFile = $('libraryImportFile').files?.[0] || null;
+    const serverZip = String($('libraryImportServerZip').value || '').trim();
+    const pathPrefix = String($('libraryImportSubdir')?.value || '').trim();
+    if (!localFile && !serverZip) {
+        $('libraryImportStatus').textContent = 'Выберите ZIP из корня библиотеки или загрузите архив с компьютера.';
+        return;
+    }
+    if (!confirm('Импортировать метаданные и служебный кэш в текущую библиотеку? Существующие исходные видео не будут перемещены или удалены.')) return;
+    const button = $('libraryImportStartBtn');
+    button.disabled = true;
+    $('libraryImportStatus').textContent = 'Импортирую архив и сопоставляю файлы…';
+    try {
+        const values = { root, path_prefix: pathPrefix };
+        if (!localFile) values.server_zip = serverZip;
+        const data = await libraryTransferPost('import', values, localFile);
+        const result = data.import || {};
+        const missing = Array.isArray(result.missing_files) ? result.missing_files : [];
+        $('libraryImportStatus').textContent = `Готово. Сопоставлено видео: ${result.mapped_files || 0}; карточек: ${result.cards || 0}; аудио/фрагментов: ${result.derivatives || 0}; транскриптов: ${result.transcripts || 0}; файлов кэша: ${result.cache_files || 0}.${result.path_prefix ? ` Подпапка: ${result.path_prefix}.` : ''}${missing.length ? ` Не найдено/изменено: ${missing.length}.` : ''}`;
+        await loadTree({ announceInitialCache: false, processScreenshots: false });
+        if (missing.length) showMessage(`Импорт завершен, но ${missing.length} файлов не удалось сопоставить. Первые: ${missing.slice(0, 5).join('; ')}`, true);
+        else showMessage('Импорт библиотеки успешно завершен.', false);
+        await refreshLibraryImportList();
+    } catch (error) {
+        $('libraryImportStatus').textContent = error.message;
+    } finally {
+        button.disabled = false;
+    }
+}
+
 function closeImage() {
     $('imageModal').classList.add('hidden');
     $('imageModal').setAttribute('aria-hidden', 'true');
@@ -3619,6 +4171,7 @@ document.addEventListener('click', (event) => {
     if (event.target.dataset.closeMetadataView) closeMetadataViewModal();
     if (event.target.dataset.closeScreenshotView) closeScreenshotViewModal();
     if (event.target.dataset.closeSettings) closeSettingsModal();
+    if (event.target.dataset.closeLibraryImport) closeLibraryImportModal();
     if (event.target.dataset.closeTranslationTarget) closeTranslationTargetModal();
     if (event.target.dataset.closeTranscriptAdd) closeTranscriptAddModal();
     if (event.target.dataset.closeTranscript) closeTranscript();
@@ -3678,6 +4231,10 @@ document.addEventListener('keydown', (event) => {
             closeTranslationTargetModal();
             return;
         }
+        if (!$('libraryImportModal').classList.contains('hidden')) {
+            closeLibraryImportModal();
+            return;
+        }
         if (!$('settingsModal').classList.contains('hidden')) {
             closeSettingsModal();
             return;
@@ -3709,6 +4266,7 @@ document.addEventListener('keydown', (event) => {
         && $('metadataViewModal').classList.contains('hidden')
         && $('screenshotViewModal').classList.contains('hidden')
         && $('settingsModal').classList.contains('hidden')
+        && $('libraryImportModal').classList.contains('hidden')
         && $('translationTargetModal').classList.contains('hidden')
         && $('transcriptModal').classList.contains('hidden')) {
         deleteSelected();
@@ -3760,6 +4318,11 @@ $('imageStage').addEventListener('touchend', (event) => {
 
 $('listViewBtn').addEventListener('click', () => setViewMode('list'));
 $('tileViewBtn').addEventListener('click', () => setViewMode('tiles'));
+$('sortMode')?.addEventListener('change', (event) => setSortMode(event.target.value));
+$('folderSearchInput')?.addEventListener('input', (event) => {
+    folderSearchQuery = String(event.target.value || '');
+    if (currentTree) renderTree(currentTree);
+});
 $('pinnedVideosSection').addEventListener('toggle', () => {
     if ($('pinnedVideosSection').open && currentViewMode === 'tiles') observeLazyThumbnails($('pinnedVideos'));
 });
@@ -3769,6 +4332,10 @@ $('actionsMenuButton').addEventListener('click', toggleActionsMenu);
 $('openMetadataImportBtn').addEventListener('click', openMetadataImportModal);
 $('openMetadataViewBtn').addEventListener('click', openMetadataViewModal);
 $('openScreenshotViewBtn').addEventListener('click', openScreenshotViewModal);
+$('exportLibraryBtn').addEventListener('click', exportCurrentLibrary);
+$('importLibraryBtn').addEventListener('click', openLibraryImportModal);
+$('libraryImportRefreshBtn').addEventListener('click', refreshLibraryImportList);
+$('libraryImportStartBtn').addEventListener('click', importCurrentLibrary);
 $('openSettingsBtn').addEventListener('click', openSettingsModal);
 $('logoutBtn').addEventListener('click', logoutApplication);
 $('authSettingsForm').addEventListener('submit', saveAuthSettings);
@@ -3792,11 +4359,20 @@ $('transcriptVersionButton').addEventListener('click', (event) => {
     event.stopPropagation();
     $('transcriptVersionMenu').classList.toggle('hidden');
 });
+$('transcriptTranslateBtn')?.addEventListener('click', () => {
+    if (currentTranscriptData) openTranslationTargetModal(currentTranscriptData);
+});
 $('transcriptAddSegmentBtn').addEventListener('click', openTranscriptAddModal);
 $('transcriptAddSaveBtn').addEventListener('click', saveTranscriptAddedSegment);
 $('metadataViewSearch').addEventListener('input', renderMetadataViewRows);
 $('screenshotViewSearch').addEventListener('input', renderScreenshotViewRows);
 $('metadataImportForm').addEventListener('submit', importMetadata);
+
+document.addEventListener('click', (event) => {
+    document.querySelectorAll('.derivative-action-menu[open]').forEach((menu) => {
+        if (!menu.contains(event.target)) menu.removeAttribute('open');
+    });
+});
 
 $('tree').addEventListener('contextmenu', (event) => {
     if (event.target.closest('.node-row, .video-tile')) return;
@@ -3848,6 +4424,10 @@ $('viewFromModal').addEventListener('click', () => {
     const button = $('viewFromModal');
     if (button.dataset.token) openVideo(button.dataset.token, button.dataset.title || $('modalFileName').textContent);
 });
+$('cardCoverButton')?.addEventListener('click', () => {
+    const button = $('cardCoverButton');
+    if (button.dataset.token) openVideo(button.dataset.token, button.dataset.title || $('modalFileName').textContent);
+});
 $('pinFromModal').addEventListener('click', () => {
     const token = $('cardToken').value;
     const pinned = $('pinFromModal').dataset.pinned === '1';
@@ -3889,3 +4469,15 @@ window.addEventListener('focus', () => {
         showMessage('Проверьте подключение к БД: ' + error.message);
     }
 })();
+
+$('prevCardBtn')?.addEventListener('click', () => navigateCard(-1));
+$('nextCardBtn')?.addEventListener('click', () => navigateCard(1));
+
+document.addEventListener('keydown', (event) => {
+    if ($('cardModal')?.classList.contains('hidden')) return;
+    if (!event.altKey || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) return;
+    const target = event.target;
+    if (target instanceof HTMLInputElement || target instanceof HTMLTextAreaElement || target instanceof HTMLSelectElement) return;
+    event.preventDefault();
+    navigateCard(event.key === 'ArrowLeft' ? -1 : 1);
+});

@@ -449,6 +449,8 @@ function card_payload(array $card): array
         'category_id' => $cachedFile ? lc_category_id_for_file((int)$cachedFile['id']) : null,
         'is_pinned' => $cachedFile ? (bool)($cachedFile['is_pinned'] ?? false) : false,
         'duration_seconds' => $cachedFile ? video_duration_for_cached_file((int)$cachedFile['root_id'], (string)$cachedFile['file_hash']) : null,
+        'file_size' => $cachedFile ? (int)($cachedFile['file_size'] ?? 0) : 0,
+        'first_seen_at' => $cachedFile ? ($cachedFile['first_seen_at'] ?? null) : null,
         'screenshots' => $screenshots,
         'images' => $images,
     ];

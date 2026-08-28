@@ -1,36 +1,211 @@
-<img width="1575" height="791" alt="solanace-logo" src="https://github.com/user-attachments/assets/a6fb13f2-38a5-4712-8a5b-3194e9fd1b45" />
-
 # Solanace
 
-**Solanace** is a local web-based media catalog and toolbox for video archives. It indexes server folders, stores cards and categories, generates preview frames, cuts and merges video, extracts audio, and supports transcription and transcript translation.
+**Solanace** is a self-hosted web catalog and toolbox for local video archives. It indexes server-side folders, shows folders and files in a desktop-style interface, stores metadata cards and categories, generates thumbnails, cuts and merges video, extracts audio, transcribes speech, translates transcripts, and supports portable library export/import between instances.
 
-The project is intended primarily for **internal use** — a LAN, VPN, or access through a reverse proxy. It is not designed as a public multi-user cloud service.
+Solanace is designed primarily for **internal deployments**: LAN, VPN, or a trusted reverse proxy. It is a single-administrator application and intentionally has powerful access to selected media folders.
 
-## Main features
+> The UI is bilingual: Russian / English. Windows and Linux are supported.
 
-- cached file tree with list and thumbnail views;
-- video cards, notes, categories, and attached images;
-- full-text search including transcripts;
-- 10 automatically generated frames per video and custom thumbnail selection;
-- pinned videos;
-- bulk move, delete, category assignment, and merge actions;
-- FFmpeg integration for frames, audio, clips, MP4 conversion, and video merging;
-- pluggable transcription providers (currently Groq / Whisper);
-- machine and user-provided transcript translations;
-- editable timestamped segments with seek-to-time links;
-- Russian / English UI;
-- local authentication with Argon2id password hashing.
+## Highlights
+
+### Library and file manager
+
+- attach any server-side folder as a library;
+- cache the directory tree in MySQL/MariaDB instead of rescanning recursively on every page load;
+- folder tree on the left, current-folder files on the right;
+- local folder-tree search;
+- clickable breadcrumbs for direct navigation to parent folders;
+- list and thumbnail views;
+- alphabetical A-Z / Z-A sorting and duration ascending / descending;
+- create folders, move files/folders, drag-and-drop, physical deletion;
+- multi-selection with bulk move, delete, category assignment, and merge actions;
+- favorite folders and pinned videos;
+- full-library search and category filtering;
+- per-library category namespaces;
+- cache refresh detects added, removed, changed, moved, and renamed files;
+- cards survive moves and renames through stable `file_hash` identification;
+- library roots are tracked using `.video_catalog_screenshots/library.id`, allowing drive-letter/root-path changes.
+
+### Video card
+
+The card opens as a wide modal with a **1/4 – 2/4 – 1/4** column layout and a bounded maximum width.
+
+It includes:
+
+- source file name and path;
+- previous/next navigation inside the current folder;
+- `Alt + Left` / `Alt + Right` keyboard navigation;
+- selected thumbnail; clicking it opens video playback;
+- file size, duration, and date added;
+- custom title;
+- category;
+- note;
+- pin state;
+- new-category creation;
+- all 10 generated frames visible directly;
+- custom primary thumbnail selection;
+- manually attached images;
+- promoted-clip/source relationships;
+- merge provenance;
+- delete-card-only and delete-from-disk actions.
+
+### FFmpeg tools and derivatives
+
+The unified **Clip / Audio / Transcript** dialog supports a shared time range and any useful combination of:
+
+- video clip extraction;
+- MP3 or FLAC audio extraction;
+- speech transcription.
+
+Supported audio presets include MP3 64 / 96 / 192 kbps and FLAC.
+
+Other media features:
+
+- browser-incompatible video conversion to H.264/AAC MP4;
+- derived files stored under the library service directory;
+- promote a clip into a regular library video;
+- transfer matching audio/transcript/translation data to a promoted clip;
+- shift transcript timestamps to the new clip timeline.
+
+Clip, audio, and transcript rows expose compact gear menus. Clip names open playback; transcript names open the transcript viewer.
+
+### Automatic frames and thumbnails
+
+- 10 generated frames per video;
+- stored under `.video_catalog_screenshots/<file_hash>/`;
+- detached PHP CLI / FFmpeg worker;
+- progress and current-file status;
+- stop/resume support;
+- stale-worker recovery;
+- lazy-loaded tile thumbnails using `IntersectionObserver`;
+- user-selected frame as the primary thumbnail.
+
+### Transcription
+
+Current provider: **Groq / Whisper** through the Python SDK.
+
+Supported models:
+
+- `whisper-large-v3`;
+- `whisper-large-v3-turbo`.
+
+Language options: auto / Russian / English.
+
+Stored data includes generated audio, TXT, full text, timestamped segments, provider/model information, and source interval. Large audio is chunked and merged with corrected timestamps.
+
+### Transcript viewer and editing
+
+- timestamped segment list;
+- click a timestamp to open video at that position;
+- edit/delete segments;
+- manually add a segment using `[hh:mm:ss] text`;
+- switch between original and translations;
+- TXT download;
+- direct **Translate** action from the viewer;
+- transcript text participates in global search.
+
+### Transcript translation
+
+Current provider: Groq.
+
+Supported models:
+
+- `openai/gpt-oss-20b`;
+- `openai/gpt-oss-120b`.
+
+Features:
+
+- machine translation to Russian and English;
+- multiple translation variants per transcript;
+- custom TXT translation import via file selection or drag-and-drop;
+- custom translation names;
+- independent custom segmentation;
+- edit/delete/add translation segments;
+- delete individual variants;
+- UTF-8 BOM TXT downloads;
+- selected viewer variant persisted in localStorage.
+
+### Video merge
+
+Selecting two or more videos enables **Merge**. The dialog supports:
+
+- drag-to-reorder sources;
+- output name;
+- Auto / 1920×1080 / 1280×720;
+- fit/pad or fill/crop;
+- quality selection;
+- fast concat without re-encoding when streams are compatible;
+- forced H.264/AAC normalization otherwise.
+
+Missing audio can be normalized with silence. Background progress includes percentage, processed/total time, stage, and heartbeat. The result is inserted into the library, gets its own frames, and stores ordered source provenance.
+
+### Bulk utilities
+
+The **Actions** menu contains:
+
+- bulk metadata import from XLSX/CSV;
+- bulk metadata view;
+- bulk frame view;
+- library export;
+- library import;
+- settings;
+- sign out.
+
+Metadata import can set custom title, note, and category; missing categories are created automatically.
+
+### Portable library export/import
+
+**Export library** creates in the current media root:
+
+```text
+solanace_export_YYYY-MM-DD_HH-MM-SS.zip
+```
+
+The archive contains cards, categories, category assignments, pin states, thumbnail selection, frames, derivatives, transcripts, translations, merge/promoted-clip relationships, attached images, and useful `.video_catalog_screenshots` content.
+
+**Source videos are not included.** Application/DB credentials, Groq API keys, and provider settings are excluded.
+
+Migration flow:
+
+1. copy source videos to the new server/disk;
+2. copy the export ZIP;
+3. select the new root in Solanace;
+4. open **Actions → Import library**;
+5. optionally provide a relative **subfolder containing transferred files**;
+6. choose the ZIP from the server root or upload it;
+7. import.
+
+Old absolute paths and old database IDs are not restored. Files are matched by relative path, optional subfolder prefix, and `file_hash`, and new IDs are created in the target instance without restructuring source files.
+
+## UI layout
+
+The main view targets widescreen displays without stretching small controls across the whole screen. Search and category filters remain centered and bounded.
+
+The workspace contains:
+
+- folder tree on the left;
+- current-folder files on the right;
+- clickable breadcrumbs;
+- sort/view controls;
+- pinned-video section;
+- selection toolbar shown only when items are selected.
+
+The folder tree expands vertically with its contents instead of using a separate internal vertical scrollbar. Folder search temporarily filters the tree while preserving parent chains.
 
 ## Requirements
 
-- PHP **8.1+** (8.2/8.3 recommended);
-- MySQL 8+ or a current MariaDB release;
+- PHP **8.1+**; 8.2/8.3 recommended;
+- MySQL 8+ or current MariaDB;
 - Apache or Nginx;
 - FFmpeg + ffprobe;
-- PHP extensions: `pdo_mysql`, `mbstring`, `fileinfo`, `simplexml`;
-- `gd` is recommended for lightweight thumbnail tiles;
-- `zip` is recommended for XLSX import (fallback readers are available);
-- Python is required only for the current Groq transcription/translation bridge.
+- PHP extensions:
+  - `pdo_mysql`;
+  - `mbstring`;
+  - `fileinfo`;
+  - `simplexml`;
+  - `zip` / `ZipArchive` required for library export/import;
+  - `gd` recommended for lightweight tile thumbnails;
+- Python only for the current Groq bridge.
 
 For Groq:
 
@@ -42,23 +217,23 @@ python -m pip install groq
 
 ### 1. Copy the project
 
-Windows/Laragon example:
+Windows/Laragon:
 
 ```text
 C:\laragon\www\solanace
 ```
 
-Linux/Apache example:
+Linux:
 
 ```text
 /var/www/solanace
 ```
 
-The `uploads/` directory must be writable by PHP. Media roots must be readable by the PHP service account and writable if you want move/delete/clip/merge operations.
+`uploads/` must be writable by PHP. Media roots must be readable; move/delete/FFmpeg/export operations also require write access.
 
-### 2. Create the database and DB user
+### 2. Create the database
 
-The supplied `config.php` defaults to:
+Default `config.php` values:
 
 ```text
 DB_HOST = 127.0.0.1
@@ -67,87 +242,73 @@ DB_USER = admin
 DB_PASS = admin
 ```
 
-On a clean local MySQL/MariaDB server, run as a database administrator:
+As a DB administrator:
 
 ```bash
 mysql -u root -p < database_bootstrap.sql
 ```
 
-This creates database `solanace` and DB account `admin/admin`, granted privileges **only on the Solanace database**.
-
-> The database password `admin` is only a convenient installation default. Change it after installation and update `DB_PASS` in `config.php`.
-
-### 3. Create the schema
+Then:
 
 ```bash
 mysql -u admin -p solanace < install.sql
 ```
 
-Default password: `admin`.
+Default DB password: `admin`.
 
-The same files can be imported with phpMyAdmin: run `database_bootstrap.sql` as an administrative DB user, then run `install.sql`.
+### 3. FFmpeg
 
-### 4. FFmpeg
-
-If `ffmpeg`, `ffprobe`, and PHP CLI are available in `PATH`, no configuration is required.
-
-You may also place FFmpeg under:
+If `ffmpeg`, `ffprobe`, and PHP CLI are in `PATH`, no extra setup is needed. You may also put binaries under:
 
 ```text
-tools/ffmpeg/bin/ffmpeg.exe
-tools/ffmpeg/bin/ffprobe.exe
+tools/ffmpeg/bin/
 ```
 
-or set explicit paths in `config.php`:
+or configure explicit paths in `config.php`. Empty path settings enable auto-discovery on both Windows and Linux.
 
-```php
-define('FFMPEG_PATH', '');
-define('FFPROBE_PATH', '');
-define('PHP_CLI_PATH', '');
-```
-
-Empty values enable automatic discovery. The same configuration works on Windows and Linux.
-
-### 5. First login
-
-Open Solanace in a browser.
-
-Default application credentials:
+### 4. First login
 
 ```text
 username: admin
 password: admin
 ```
 
-While the application password remains `admin`, a warning banner is displayed at the top of the main UI. Change it via:
+A warning banner remains visible while the default application password and/or default DB credentials are in use. Change the app credentials via **Actions → Settings → Username and password**.
 
-**Actions → Settings → Username and password**.
+Application passwords use Argon2id.
 
-Application passwords are stored with Argon2id. For emergency manual hash replacement, use:
+## Groq settings
 
-```text
-tools/make_password_hash.php
-tools/make_password_hash.py
-```
+Open **Actions → Settings** and set provider, model, API key, and optional Python path.
 
-## Groq configuration
-
-Open **Actions → Settings** and configure:
-
-- provider;
-- model;
-- API key;
-- Python path when required.
-
-A Windows/Laragon Python path can look like:
+Laragon example:
 
 ```text
 C:\laragon\bin\python\python-3.13\python.exe
 ```
 
-## Restricting filesystem access
+If translation-specific Groq API/Python fields are empty, the transcription values are reused.
 
-By design, an authenticated Solanace administrator can select server directories readable by PHP. If the server also contains unrelated sensitive directories, restrict media roots in `config.php`:
+## Security and deployment model
+
+Deploy Solanace behind a LAN, VPN, or trusted reverse proxy. Direct Internet exposure of this administrative app is not recommended.
+
+Implemented protections include:
+
+- local authentication;
+- Argon2id;
+- CSRF tokens;
+- strict PHP sessions, HttpOnly, SameSite=Lax, and Secure under HTTPS;
+- CSP, X-Frame-Options, nosniff, Referrer-Policy, Permissions-Policy;
+- media-root containment checks;
+- prepared SQL statements;
+- authenticated media and attachment delivery;
+- direct HTTP denial for `uploads/` and service files under Apache;
+- image upload size/count limits;
+- CLI-only workers;
+- optional media-root allowlist.
+
+Example:
 
 ```php
 define('ALLOWED_MEDIA_ROOTS', [
@@ -156,7 +317,7 @@ define('ALLOWED_MEDIA_ROOTS', [
 ]);
 ```
 
-Windows example:
+Windows:
 
 ```php
 define('ALLOWED_MEDIA_ROOTS', [
@@ -165,90 +326,53 @@ define('ALLOWED_MEDIA_ROOTS', [
 ]);
 ```
 
-An empty array disables this additional boundary.
+## Reverse proxy
 
-## Reverse proxy / HTTPS
-
-Solanace does not trust `X-Forwarded-*` headers by default. If the application is reachable **only** through a trusted reverse proxy that sets `X-Forwarded-Proto` correctly, enable:
+By default Solanace does not trust `X-Forwarded-*`. If PHP is reachable only through a trusted proxy that sets `X-Forwarded-Proto` correctly:
 
 ```php
 define('TRUST_PROXY_HEADERS', true);
 ```
 
-This lets the application set a `Secure` session cookie when HTTPS terminates at the proxy.
+## Apache and Nginx
 
-Do not enable this option when clients can reach the backend directly from an untrusted network.
+The repository ships `.htaccess` rules that protect service files and direct access to `uploads/`. Apache must allow `AllowOverride`.
 
-## Apache
+Nginx ignores `.htaccess`, so equivalent deny rules must be configured manually.
 
-The package includes `.htaccess` rules that:
+## Data storage
 
-- disable directory listing;
-- block direct web access to `config.php`, library/worker files, SQL and Python files;
-- block direct HTTP access to `uploads/`;
-- automatically protect `.video_catalog_screenshots` service directories with their own `.htaccess`.
+Source video files remain in place.
 
-Apache must allow overrides (`AllowOverride`) for the application directory.
-
-## Nginx
-
-Nginx ignores `.htaccess`. Add equivalent restrictions, for example:
-
-```nginx
-location ~* /(config|db|auth|library_identity|library_categories|.*_lib|.*_worker)\.php$ {
-    deny all;
-}
-location ^~ /uploads/ {
-    deny all;
-}
-location ~* \.(sql|py|pyc|md|log|ini|bak)$ {
-    deny all;
-}
-```
-
-Adjust the paths if Solanace is mounted below a URL prefix.
-
-## Security notes
-
-The fresh-install package received a focused security review appropriate for an internal application. The following changes were applied:
-
-- removed the unauthenticated diagnostic `wrtest.php` file that could write a test file to disk;
-- `media.php` no longer accepts an arbitrary base64 filesystem path; it serves only videos registered in `library_files`;
-- cards can no longer be created from arbitrary paths outside the cache;
-- attached images are no longer served directly from `uploads/`; authenticated `image.php` is used instead;
-- added CSRF protection to all state-changing JSON requests;
-- added CSP, X-Frame-Options, nosniff, Referrer-Policy, and Permissions-Policy headers;
-- enabled strict PHP sessions with HttpOnly, SameSite=Lax, and Secure cookies when HTTPS is detected;
-- limited manual image upload count and file size;
-- filesystem operations verify that targets remain inside the selected library root;
-- SQL statements containing user input use prepared statements;
-- worker scripts are CLI-only and are not normal web endpoints;
-- the suggested MySQL account is granted privileges only on database `solanace`.
-
-Solanace should still remain behind a VPN / reverse proxy and should not be exposed directly to the public Internet without additional external protection.
-
-## Data layout
-
-Source videos remain in the directories selected by the user. Derived media is stored under:
+Per-library service data lives under:
 
 ```text
-<library root>/.video_catalog_screenshots/
+<root>/.video_catalog_screenshots/
 ```
 
-This includes generated frames, derived audio, clips, and related processing output.
+This contains frames, tile thumbnails, audio, clips, converted media, and other derivatives.
 
-Cards, categories, transcripts, translations, and job state are stored in MySQL/MariaDB.
+MySQL/MariaDB stores the cached tree, cards, categories, transcripts, translations, relationships, and background-job state.
 
-## Backups
+Manually attached images are stored under the instance `uploads/` directory and are not exposed directly over HTTP.
+
+## Backup
 
 A complete backup should include:
 
-1. database `solanace`;
+1. the `solanace` database;
 2. source media roots;
-3. `.video_catalog_screenshots` inside those roots;
-4. the application's `uploads/` directory.
+3. `.video_catalog_screenshots` directories;
+4. the instance `uploads/` directory.
+
+For transferring one library between instances, use the built-in export/import feature.
+
+## Developer documentation
+
+Detailed functional/technical specification:
+
+**[`docs/TECHNICAL_SPECIFICATION_RU.md`](docs/TECHNICAL_SPECIFICATION_RU.md)**
 
 ## License
 
-Solanace is licensed under the GNU Affero General Public License v3.0
-or later (AGPL-3.0-or-later).
+Solanace is licensed under **GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`)**. See [`LICENSE`](LICENSE).
