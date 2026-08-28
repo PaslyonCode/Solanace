@@ -248,4 +248,5 @@ A complete backup should include:
 
 ## License
 
-No explicit license is currently included. Add a `LICENSE` file before publishing or redistributing the project.
+Solanace is licensed under the GNU Affero General Public License v3.0
+or later (AGPL-3.0-or-later).
