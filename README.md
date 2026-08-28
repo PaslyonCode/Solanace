@@ -1,3 +1,5 @@
+<img width="1575" height="791" alt="solanace-logo" src="https://github.com/user-attachments/assets/a6fb13f2-38a5-4712-8a5b-3194e9fd1b45" />
+
 # Solanace
 
 **Solanace** is a local web-based media catalog and toolbox for video archives. It indexes server folders, stores cards and categories, generates preview frames, cuts and merges video, extracts audio, and supports transcription and transcript translation.
