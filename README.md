@@ -1,3 +1,5 @@
+<img width="1000" height="500" alt="solanace-logo" src="https://github.com/user-attachments/assets/2009194f-cdb6-405a-ac25-668e00d617cf" />
+
 # Solanace
 
 **Solanace** is a self-hosted web catalog and toolbox for local video archives. It indexes server-side folders, shows folders and files in a desktop-style interface, stores metadata cards and categories, generates thumbnails, cuts and merges video, extracts audio, transcribes speech, translates transcripts, and supports portable library export/import between instances.
