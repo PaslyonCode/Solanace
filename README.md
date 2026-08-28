@@ -369,12 +369,6 @@ A complete backup should include:
 
 For transferring one library between instances, use the built-in export/import feature.
 
-## Developer documentation
-
-Detailed functional/technical specification:
-
-**[`docs/TECHNICAL_SPECIFICATION_RU.md`](docs/TECHNICAL_SPECIFICATION_RU.md)**
-
 ## License
 
 Solanace is licensed under **GNU Affero General Public License v3.0 or later (`AGPL-3.0-or-later`)**. See [`LICENSE`](LICENSE).
